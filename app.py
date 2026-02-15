@@ -1,94 +1,78 @@
 import streamlit as st
-from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 
 # --- SEITEN-KONFIGURATION ---
-st.set_page_config(page_title="Nachbarschafts-Einkaufshilfe", layout="centered")
+st.set_page_config(page_title="Nachbar-App", layout="centered")
 
-# --- PASSWÖRTER (PINs) ---
-PASSWORDS = {
+# --- DATEN-SPEICHER INITIALISIEREN ---
+# Wir nutzen den st.session_state. 
+# Hinweis: In der Free-Tier Cloud bleibt dieser Speicher aktiv, solange die App läuft.
+if 'einkaufsliste' not in st.session_state:
+    st.session_state.einkaufsliste = pd.DataFrame(columns=["Besteller", "Artikel", "Status"])
+
+# --- LOGIN-DATEN ---
+USERS = {
     "Nachbar A": "1111",
     "Nachbar B": "2222",
     "Einkäufer": "0000"
 }
 
-# --- VERBINDUNG ZUM GOOGLE SHEET ---
-def get_connection():
-    try:
-        creds = st.secrets["connections"]["gsheets"].to_dict()
-        if "private_key" in creds:
-            creds["private_key"] = creds["private_key"].replace("\\n", "\n")
-        if "type" in creds:
-            del creds["type"]
-        return st.connection("gsheets", type=GSheetsConnection, **creds)
-    except Exception as e:
-        st.error(f"Verbindungsfehler: {e}")
-        return None
+# --- UI ---
+st.title("🏘️ Nachbarschaftshilfe")
 
-conn = get_connection()
+# Sidebar für Login
+st.sidebar.header("Anmeldung")
+user = st.sidebar.selectbox("Wer bist du?", ["Bitte wählen"] + list(USERS.keys()))
+pin = st.sidebar.text_input("PIN", type="password")
 
-# --- DATEN LADEN ---
-def load_data():
-    if conn is None:
-        return pd.DataFrame(columns=["Besteller", "Artikel", "Status"])
-    try:
-        data = conn.read(worksheet="Einkaufsliste", ttl=0)
-        if data is None or (isinstance(data, pd.DataFrame) and data.empty):
-            return pd.DataFrame(columns=["Besteller", "Artikel", "Status"])
-        return data
-    except Exception:
-        return pd.DataFrame(columns=["Besteller", "Artikel", "Status"])
+# --- HAUPT-LOGIK ---
+if user != "Bitte wählen" and pin == USERS[user]:
+    st.sidebar.success(f"Eingeloggt als {user}")
 
-# --- LOGIN BEREICH ---
-st.title("🏘️ Nachbarschafts-App")
+    # Reiter für bessere Übersicht
+    tab1, tab2 = st.tabs(["🛒 Aktuelle Liste", "➕ Neuen Wunsch hinzufügen"])
 
-user = st.selectbox("Wer bist du?", ["Bitte wählen"] + list(PASSWORDS.keys()))
-pin = st.text_input("Gib deinen PIN ein:", type="password")
-
-if user != "Bitte wählen" and pin == PASSWORDS[user]:
-    st.success(f"Willkommen, {user}!")
-    df = load_data()
-
-    # --- ANSICHT FÜR NACHBARN ---
-    if user != "Einkäufer":
-        st.header(f"Deine Einkaufsliste")
-        with st.form("add_item", clear_on_submit=True):
-            neuer_artikel = st.text_input("Was brauchst du?")
-            submit = st.form_submit_button("Hinzufügen")
-            if submit and neuer_artikel:
-                new_row = pd.DataFrame([{"Besteller": user, "Artikel": neuer_artikel, "Status": "Offen"}])
-                updated_df = pd.concat([df, new_row], ignore_index=True)
-                conn.update(worksheet="Einkaufsliste", data=updated_df)
-                st.success(f"'{neuer_artikel}' wurde hinzugefügt!")
-                st.rerun()
-
-        st.subheader("Deine aktuellen Bestellungen")
-        meine_liste = df[df["Besteller"] == user]
-        if not meine_liste.empty:
-            st.table(meine_liste[["Artikel", "Status"]])
+    with tab2:
+        if user != "Einkäufer":
+            st.header("Was wird benötigt?")
+            with st.form("wunsch_form", clear_on_submit=True):
+                artikel = st.text_input("Artikelname")
+                absenden = st.form_submit_button("Auf die Liste setzen")
+                
+                if absenden and artikel:
+                    new_entry = pd.DataFrame([{"Besteller": user, "Artikel": artikel, "Status": "Offen"}])
+                    st.session_state.einkaufsliste = pd.concat([st.session_state.einkaufsliste, new_entry], ignore_index=True)
+                    st.success(f"{artikel} wurde hinzugefügt!")
         else:
-            st.info("Du hast noch nichts auf der Liste.")
+            st.info("Einkäufer können nur die Liste einsehen und Dinge abhaken.")
 
-    # --- ANSICHT FÜR EINKÄUFER ---
-    else:
-        st.header("🛒 Alle offenen Einkäufe")
-        if not df.empty:
-            # Hier war der Fehler: Das Wort "Offen" muss in Anführungszeichen stehen
-            offene_artikel = df[df["Status"] == "Offen"]
+    with tab1:
+        st.header("Einkaufsliste")
+        df = st.session_state.einkaufsliste
+        
+        if df.empty:
+            st.write("Die Liste ist aktuell leer.")
+        else:
+            # Nur offene Posten anzeigen
+            offene_posten = df[df["Status"] == "Offen"]
             
-            if offene_artikel.empty:
-                st.balloons()
+            if offene_posten.empty:
                 st.success("Alles erledigt!")
             else:
-                for index, row in offene_artikel.iterrows():
+                for index, row in offene_posten.iterrows():
                     col1, col2 = st.columns([3, 1])
                     col1.write(f"**{row['Artikel']}** (für {row['Besteller']})")
-                    if col2.button("Erledigt", key=f"check_{index}"):
-                        df.at[index, "Status"] = "Erledigt"
-                        conn.update(worksheet="Einkaufsliste", data=df)
+                    
+                    # Erledigt-Button
+                    if col2.button("Erledigt ✅", key=f"btn_{index}"):
+                        st.session_state.einkaufsliste.at[index, "Status"] = "Erledigt"
                         st.rerun()
-        else:
-            st.info("Die Liste ist momentan komplett leer.")
 
-elif pin != "" and user != "Bitte wählen":
-    st.error("Falscher PIN.")
+            # Historie (optional einblendbar)
+            with st.expander("Abgeschlossene Einkäufe anzeigen"):
+                st.dataframe(df[df["Status"] == "Erledigt"])
+
+else:
+    if pin != "":
+        st.sidebar.error("Falscher PIN")
+    st.info("Bitte wähle links deinen Namen und gib deinen PIN ein, um die Liste zu sehen.")
