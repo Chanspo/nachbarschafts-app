@@ -3,6 +3,7 @@ from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 
 # --- VERBINDUNG ZUM GOOGLE SHEET ---
+# Wir sagen der App explizit, dass sie den öffentlichen Link nutzen soll
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 # --- PASSWÖRTER (PINs) ---
