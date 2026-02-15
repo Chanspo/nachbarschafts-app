@@ -1,16 +1,13 @@
 import streamlit as st
 import pandas as pd
+from sqlalchemy import text # WICHTIG: Das hat gefehlt!
 
 # --- SEITEN-KONFIGURATION ---
 st.set_page_config(page_title="Nachbar-App Live", layout="centered", page_icon="🏘️")
 
-# --- DATENBANK-VERBINDUNG (Robust-Modus) ---
+# --- DATENBANK-VERBINDUNG ---
 try:
-    # Wir ziehen die Daten direkt aus der Sektion [connections.tidb]
     creds = st.secrets["connections"]["tidb"]
-    
-    # Wir bauen den Connection-String manuell, um Fehler bei Feldnamen zu vermeiden
-    # Format: mysql+pymysql://user:password@host:port/database
     db_url = f"mysql+pymysql://{creds['user']}:{creds['password']}@{creds['host']}:{creds['port']}/{creds['database']}"
     
     # Verbindung herstellen
@@ -22,15 +19,16 @@ except Exception as e:
     st.stop()
 
 # --- TABELLE INITIALISIEREN ---
+# Hier nutzen wir jetzt text(), um den ArgumentError zu beheben
 with conn.session as s:
-    s.execute("""
+    s.execute(text("""
         CREATE TABLE IF NOT EXISTS einkaufsliste (
             id INT AUTO_INCREMENT PRIMARY KEY,
             besteller VARCHAR(255),
             artikel VARCHAR(255),
             status VARCHAR(50)
         );
-    """)
+    """))
     s.commit()
 
 # --- BENUTZER-DATEN ---
@@ -53,7 +51,6 @@ if user != "Bitte wählen" and pin == USERS[user]:
     # --- EINKÄUFER-ANSICHT ---
     if user == "Einkäufer":
         st.header("🛒 Alle offenen Wünsche")
-        # Wir laden die Daten ohne Cache (ttl=0), damit sie immer aktuell sind
         df = conn.query("SELECT * FROM einkaufsliste WHERE status = 'Offen' ORDER BY id DESC;", ttl=0)
         
         if df is None or df.empty:
@@ -64,7 +61,7 @@ if user != "Bitte wählen" and pin == USERS[user]:
                 col1.write(f"**{row['artikel']}** (für {row['besteller']})")
                 if col2.button("Erledigt ✅", key=f"done_{row['id']}"):
                     with conn.session as s:
-                        s.execute("UPDATE einkaufsliste SET status = 'Erledigt' WHERE id = :id", {"id": row['id']})
+                        s.execute(text("UPDATE einkaufsliste SET status = 'Erledigt' WHERE id = :id"), {"id": row['id']})
                         s.commit()
                     st.rerun()
         
@@ -83,7 +80,7 @@ if user != "Bitte wählen" and pin == USERS[user]:
             if neuer_artikel:
                 with conn.session as s:
                     s.execute(
-                        "INSERT INTO einkaufsliste (besteller, artikel, status) VALUES (:b, :a, :s);",
+                        text("INSERT INTO einkaufsliste (besteller, artikel, status) VALUES (:b, :a, :s)"),
                         {"b": user, "a": neuer_artikel, "s": "Offen"}
                     )
                     s.commit()
@@ -92,7 +89,9 @@ if user != "Bitte wählen" and pin == USERS[user]:
 
         with tab2:
             st.subheader("Deine aktuellen Einträge")
-            meine_daten = conn.query(f"SELECT * FROM einkaufsliste WHERE besteller = '{user}' AND status = 'Offen' ORDER BY id DESC;", ttl=0)
+            # Wir nutzen Parameter-Binding für Sicherheit
+            meine_daten = conn.query("SELECT * FROM einkaufsliste WHERE besteller = :u AND status = 'Offen' ORDER BY id DESC;", 
+                                     params={"u": user}, ttl=0)
             
             if meine_daten is None or meine_daten.empty:
                 st.info("Du hast momentan keine offenen Wünsche.")
@@ -102,7 +101,7 @@ if user != "Bitte wählen" and pin == USERS[user]:
                     c1.write(f"⏳ {row['artikel']}")
                     if c2.button("Löschen 🗑️", key=f"del_{row['id']}"):
                         with conn.session as s:
-                            s.execute("DELETE FROM einkaufsliste WHERE id = :id", {"id": row['id']})
+                            s.execute(text("DELETE FROM einkaufsliste WHERE id = :id"), {"id": row['id']})
                             s.commit()
                         st.rerun()
 else:
