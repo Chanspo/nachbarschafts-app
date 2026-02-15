@@ -12,22 +12,12 @@ PASSWORDS = {
     "Einkäufer": "0000"
 }
 
-# --- VERBINDUNG ZUM GOOGLE SHEET (KORRIGIERT) ---
+# --- VERBINDUNG ZUM GOOGLE SHEET ---
 def get_connection():
     try:
-        # Wir laden die Rohdaten aus den Secrets
-        creds = dict(st.secrets["connections"]["gsheets"])
-        
-        # Fix für den Private Key (wandelt Text-\n in echte Umbrüche um)
-        if "private_key" in creds:
-            creds["private_key"] = creds["private_key"].replace("\\n", "\n")
-        
-        # WICHTIG: Wir nehmen 'type' aus den creds heraus, 
-        # da wir es als zweites Argument direkt an st.connection übergeben.
-        conn_type = creds.pop("type", "service_account")
-        
-        # Verbindung herstellen
-        return st.connection("gsheets", type=GSheetsConnection, **creds)
+        # Wir erstellen die Verbindung ganz ohne manuelle Parameter-Übergabe.
+        # Streamlit zieht sich die Daten AUTOMATISCH aus [connections.gsheets] in den Secrets.
+        return st.connection("gsheets", type=GSheetsConnection)
     except Exception as e:
         st.error(f"Verbindungsfehler: {e}")
         return None
@@ -40,14 +30,14 @@ def load_data():
         return pd.DataFrame(columns=["Besteller", "Artikel", "Status"])
     
     try:
-        # Versuche das Blatt "Einkaufsliste" zu lesen
+        # Wir erzwingen das Lesen des Arbeitsblatts "Einkaufsliste"
         data = conn.read(worksheet="Einkaufsliste", ttl=0)
         
         if data is None or (isinstance(data, pd.DataFrame) and data.empty):
             return pd.DataFrame(columns=["Besteller", "Artikel", "Status"])
         return data
     except Exception as e:
-        st.info("Hinweis: Das Tabellenblatt 'Einkaufsliste' wurde nicht gefunden oder ist leer.")
+        # Falls das Blatt nicht gefunden wird, geben wir ein leeres Gerüst zurück
         return pd.DataFrame(columns=["Besteller", "Artikel", "Status"])
 
 # --- LOGIN BEREICH ---
@@ -71,6 +61,7 @@ if user != "Bitte wählen" and pin == PASSWORDS[user]:
                 if artikel:
                     new_row = pd.DataFrame([{"Besteller": user, "Artikel": artikel, "Status": "Offen"}])
                     updated_df = pd.concat([df, new_row], ignore_index=True)
+                    # Zurückschreiben ins Google Sheet
                     conn.update(worksheet="Einkaufsliste", data=updated_df)
                     st.success(f"'{artikel}' gespeichert!")
                     st.rerun()
@@ -84,18 +75,21 @@ if user != "Bitte wählen" and pin == PASSWORDS[user]:
     # --- ANSICHT FÜR EINKÄUFER ---
     else:
         st.header("🛒 Einkaufsliste für alle")
-        offene = df[df["Status"] == "Offen"] if not df.empty else pd.DataFrame()
-        
-        if offene.empty:
-            st.success("Keine offenen Bestellungen!")
+        if not df.empty:
+            offene = df[df["Status"] == "Offen"]
+            
+            if offene.empty:
+                st.success("Keine offenen Bestellungen!")
+            else:
+                for index, row in offene.iterrows():
+                    col1, col2 = st.columns([3, 1])
+                    col1.write(f"**{row['Artikel']}** (für {row['Besteller']})")
+                    if col2.button("Erledigt", key=f"btn_{index}"):
+                        df.at[index, "Status"] = "Erledigt"
+                        conn.update(worksheet="Einkaufsliste", data=df)
+                        st.rerun()
         else:
-            for index, row in offene.iterrows():
-                col1, col2 = st.columns([3, 1])
-                col1.write(f"**{row['Artikel']}** (für {row['Besteller']})")
-                if col2.button("Erledigt", key=f"btn_{index}"):
-                    df.at[index, "Status"] = "Erledigt"
-                    conn.update(worksheet="Einkaufsliste", data=df)
-                    st.rerun()
+            st.info("Die Liste im Google Sheet ist noch komplett leer.")
 
 elif pin != "" and user != "Bitte wählen":
     st.error("Falscher PIN.")
