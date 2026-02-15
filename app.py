@@ -5,8 +5,6 @@ import pandas as pd
 st.set_page_config(page_title="Nachbar-App", layout="centered")
 
 # --- DATEN-SPEICHER INITIALISIEREN ---
-# Wir nutzen den st.session_state. 
-# Hinweis: In der Free-Tier Cloud bleibt dieser Speicher aktiv, solange die App läuft.
 if 'einkaufsliste' not in st.session_state:
     st.session_state.einkaufsliste = pd.DataFrame(columns=["Besteller", "Artikel", "Status"])
 
@@ -29,50 +27,54 @@ pin = st.sidebar.text_input("PIN", type="password")
 if user != "Bitte wählen" and pin == USERS[user]:
     st.sidebar.success(f"Eingeloggt als {user}")
 
-    # Reiter für bessere Übersicht
-    tab1, tab2 = st.tabs(["🛒 Aktuelle Liste", "➕ Neuen Wunsch hinzufügen"])
+    # Einkäufer sieht alles, Nachbarn sehen ihre eigene Übersicht
+    if user == "Einkäufer":
+        st.header("🛒 Alle offenen Einkäufe")
+        df = st.session_state.einkaufsliste
+        offene_posten = df[df["Status"] == "Offen"]
+        
+        if offene_posten.empty:
+            st.success("Alles erledigt! Keine offenen Wünsche.")
+        else:
+            for index, row in offene_posten.iterrows():
+                col1, col2 = st.columns([3, 1])
+                col1.write(f"**{row['Artikel']}** (für {row['Besteller']})")
+                if col2.button("Erledigt ✅", key=f"done_{index}"):
+                    st.session_state.einkaufsliste.at[index, "Status"] = "Erledigt"
+                    st.rerun()
+        
+        with st.expander("Vergangene Einkäufe einblenden"):
+            st.dataframe(df[df["Status"] == "Erledigt"])
 
-    with tab2:
-        if user != "Einkäufer":
-            st.header("Was wird benötigt?")
+    else:
+        # --- BEREICH FÜR NACHBARN ---
+        tab1, tab2 = st.tabs(["➕ Neuer Wunsch", "📋 Meine Liste"])
+
+        with tab1:
+            st.subheader("Was brauchst du heute?")
             with st.form("wunsch_form", clear_on_submit=True):
-                artikel = st.text_input("Artikelname")
+                artikel = st.text_input("Artikelname (z.B. 1L Milch)")
                 absenden = st.form_submit_button("Auf die Liste setzen")
                 
                 if absenden and artikel:
                     new_entry = pd.DataFrame([{"Besteller": user, "Artikel": artikel, "Status": "Offen"}])
                     st.session_state.einkaufsliste = pd.concat([st.session_state.einkaufsliste, new_entry], ignore_index=True)
-                    st.success(f"{artikel} wurde hinzugefügt!")
-        else:
-            st.info("Einkäufer können nur die Liste einsehen und Dinge abhaken.")
+                    st.success(f"'{artikel}' wurde gespeichert!")
+                    st.rerun()
 
-    with tab1:
-        st.header("Einkaufsliste")
-        df = st.session_state.einkaufsliste
-        
-        if df.empty:
-            st.write("Die Liste ist aktuell leer.")
-        else:
-            # Nur offene Posten anzeigen
-            offene_posten = df[df["Status"] == "Offen"]
+        with tab2:
+            st.subheader(f"Status deiner Artikel")
+            meine_daten = st.session_state.einkaufsliste[st.session_state.einkaufsliste["Besteller"] == user]
             
-            if offene_posten.empty:
-                st.success("Alles erledigt!")
+            if meine_daten.empty:
+                st.info("Du hast noch keine Artikel hinzugefügt.")
             else:
-                for index, row in offene_posten.iterrows():
-                    col1, col2 = st.columns([3, 1])
-                    col1.write(f"**{row['Artikel']}** (für {row['Besteller']})")
-                    
-                    # Erledigt-Button
-                    if col2.button("Erledigt ✅", key=f"btn_{index}"):
-                        st.session_state.einkaufsliste.at[index, "Status"] = "Erledigt"
-                        st.rerun()
-
-            # Historie (optional einblendbar)
-            with st.expander("Abgeschlossene Einkäufe anzeigen"):
-                st.dataframe(df[df["Status"] == "Erledigt"])
+                # Wir zeigen eine schöne Tabelle mit Status-Icons
+                # Ersetzt Status-Text durch Icons für die Optik
+                display_df = meine_daten[["Artikel", "Status"]].copy()
+                st.table(display_df)
 
 else:
     if pin != "":
         st.sidebar.error("Falscher PIN")
-    st.info("Bitte wähle links deinen Namen und gib deinen PIN ein, um die Liste zu sehen.")
+    st.info("Bitte wähle links deinen Namen und gib deinen PIN ein.")
