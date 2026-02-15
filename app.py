@@ -12,84 +12,71 @@ PASSWORDS = {
     "Einkäufer": "0000"
 }
 
-# --- VERBINDUNG ZUM GOOGLE SHEET ---
+# --- VERBINDUNG ZUM GOOGLE SHEET (DER PEM-FIX) ---
 def get_connection():
     try:
-        # Wir erstellen die Verbindung ganz ohne manuelle Parameter-Übergabe.
-        # Streamlit zieht sich die Daten AUTOMATISCH aus [connections.gsheets] in den Secrets.
-        return st.connection("gsheets", type=GSheetsConnection)
+        # 1. Wir holen die Zugangsdaten direkt aus den Secrets
+        # Wir müssen .to_dict() nutzen, damit wir die Daten bearbeiten können
+        creds = st.secrets["connections"]["gsheets"].to_dict()
+        
+        # 2. DER ENTSCHEIDENDE FIX:
+        # Wir ersetzen die Text-Zeichenfolge '\n' durch echte Zeilenumbrüche.
+        # Das löst den "Unable to load PEM file" Fehler.
+        if "private_key" in creds:
+            creds["private_key"] = creds["private_key"].replace("\\n", "\n")
+        
+        # 3. Verbindung mit den reparierten 'service_account' Daten herstellen
+        return st.connection("gsheets", type=GSheetsConnection, **creds)
     except Exception as e:
         st.error(f"Verbindungsfehler: {e}")
         return None
 
 conn = get_connection()
 
-# --- DATEN LADEN FUNKTION ---
+# --- DATEN LADEN ---
 def load_data():
     if conn is None:
         return pd.DataFrame(columns=["Besteller", "Artikel", "Status"])
-    
     try:
-        # Wir erzwingen das Lesen des Arbeitsblatts "Einkaufsliste"
+        # Falls das Sheet "Einkaufsliste" heißt:
         data = conn.read(worksheet="Einkaufsliste", ttl=0)
-        
         if data is None or (isinstance(data, pd.DataFrame) and data.empty):
             return pd.DataFrame(columns=["Besteller", "Artikel", "Status"])
         return data
-    except Exception as e:
-        # Falls das Blatt nicht gefunden wird, geben wir ein leeres Gerüst zurück
+    except:
         return pd.DataFrame(columns=["Besteller", "Artikel", "Status"])
 
-# --- LOGIN BEREICH ---
+# --- UI LOGIK ---
 st.title("🏘️ Nachbarschafts-App")
 
 user = st.selectbox("Wer bist du?", ["Bitte wählen"] + list(PASSWORDS.keys()))
-pin = st.text_input("Gib deinen PIN ein:", type="password")
+pin = st.text_input("PIN eingeben:", type="password")
 
 if user != "Bitte wählen" and pin == PASSWORDS[user]:
-    st.success(f"Eingeloggt als {user}")
-    
+    st.success(f"Hallo {user}!")
     df = load_data()
 
-    # --- ANSICHT FÜR NACHBARN ---
     if user != "Einkäufer":
-        st.header(f"Deine Wünsche")
+        st.subheader("Was brauchst du?")
+        with st.form("neu", clear_on_submit=True):
+            artikel = st.text_input("Artikel")
+            if st.form_submit_button("Hinzufügen") and artikel:
+                new_row = pd.DataFrame([{"Besteller": user, "Artikel": artikel, "Status": "Offen"}])
+                updated_df = pd.concat([df, new_row], ignore_index=True)
+                conn.update(worksheet="Einkaufsliste", data=updated_df)
+                st.success("Gespeichert!")
+                st.rerun()
         
-        with st.form("add_form", clear_on_submit=True):
-            artikel = st.text_input("Was brauchst du?")
-            if st.form_submit_button("Hinzufügen"):
-                if artikel:
-                    new_row = pd.DataFrame([{"Besteller": user, "Artikel": artikel, "Status": "Offen"}])
-                    updated_df = pd.concat([df, new_row], ignore_index=True)
-                    # Zurückschreiben ins Google Sheet
-                    conn.update(worksheet="Einkaufsliste", data=updated_df)
-                    st.success(f"'{artikel}' gespeichert!")
-                    st.rerun()
+        st.table(df[df["Besteller"] == user])
 
-        meine_artikel = df[df["Besteller"] == user]
-        if not meine_artikel.empty:
-            st.table(meine_artikel[["Artikel", "Status"]])
-        else:
-            st.write("Deine Liste ist aktuell leer.")
-
-    # --- ANSICHT FÜR EINKÄUFER ---
     else:
-        st.header("🛒 Einkaufsliste für alle")
-        if not df.empty:
-            offene = df[df["Status"] == "Offen"]
-            
-            if offene.empty:
-                st.success("Keine offenen Bestellungen!")
-            else:
-                for index, row in offene.iterrows():
-                    col1, col2 = st.columns([3, 1])
-                    col1.write(f"**{row['Artikel']}** (für {row['Besteller']})")
-                    if col2.button("Erledigt", key=f"btn_{index}"):
-                        df.at[index, "Status"] = "Erledigt"
-                        conn.update(worksheet="Einkaufsliste", data=df)
-                        st.rerun()
-        else:
-            st.info("Die Liste im Google Sheet ist noch komplett leer.")
+        st.subheader("Offene Einkäufe")
+        offene = df[df["Status"] == "Offen"] if not df.empty else []
+        for index, row in offene.iterrows():
+            if st.button(f"Erledigt: {row['Artikel']} ({row['Besteller']})", key=index):
+                df.at[index, "Status"] = "Erledigt"
+                conn.update(worksheet="Einkaufsliste", data=df)
+                st.rerun()
 
-elif pin != "" and user != "Bitte wählen":
-    st.error("Falscher PIN.")
+elif pin:
+    st.error("Falscher PIN")
