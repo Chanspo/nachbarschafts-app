@@ -1,18 +1,27 @@
 import streamlit as st
+import pandas as pd
 
 # --- SEITEN-KONFIGURATION ---
 st.set_page_config(page_title="Nachbar-App Live", layout="centered", page_icon="🏘️")
 
-# --- DATENBANK-VERBINDUNG ---
-# Streamlit nutzt die [connections.tidb] Sektion aus deinen Secrets
+# --- DATENBANK-VERBINDUNG (Robust-Modus) ---
 try:
-    conn = st.connection("tidb", type="sql")
+    # Wir ziehen die Daten direkt aus der Sektion [connections.tidb]
+    creds = st.secrets["connections"]["tidb"]
+    
+    # Wir bauen den Connection-String manuell, um Fehler bei Feldnamen zu vermeiden
+    # Format: mysql+pymysql://user:password@host:port/database
+    db_url = f"mysql+pymysql://{creds['user']}:{creds['password']}@{creds['host']}:{creds['port']}/{creds['database']}"
+    
+    # Verbindung herstellen
+    conn = st.connection("tidb", type="sql", url=db_url)
+    
 except Exception as e:
-    st.error(f"Verbindung zur Datenbank fehlgeschlagen. Bitte Secrets prüfen. Fehler: {e}")
+    st.error(f"❌ Verbindung fehlgeschlagen. Bitte Secrets prüfen!")
+    st.info(f"Details: {e}")
     st.stop()
 
 # --- TABELLE INITIALISIEREN ---
-# Dies erstellt die Tabelle in der TiDB Cloud, falls sie noch nicht existiert
 with conn.session as s:
     s.execute("""
         CREATE TABLE IF NOT EXISTS einkaufsliste (
@@ -44,10 +53,10 @@ if user != "Bitte wählen" and pin == USERS[user]:
     # --- EINKÄUFER-ANSICHT ---
     if user == "Einkäufer":
         st.header("🛒 Alle offenen Wünsche")
-        # Daten live aus TiDB laden
+        # Wir laden die Daten ohne Cache (ttl=0), damit sie immer aktuell sind
         df = conn.query("SELECT * FROM einkaufsliste WHERE status = 'Offen' ORDER BY id DESC;", ttl=0)
         
-        if df.empty:
+        if df is None or df.empty:
             st.success("Alles erledigt! Keine offenen Posten.")
         else:
             for index, row in df.iterrows():
@@ -61,7 +70,8 @@ if user != "Bitte wählen" and pin == USERS[user]:
         
         with st.expander("Historie ansehen"):
             erledigt_df = conn.query("SELECT * FROM einkaufsliste WHERE status = 'Erledigt' LIMIT 20;", ttl=0)
-            st.dataframe(erledigt_df)
+            if erledigt_df is not None:
+                st.dataframe(erledigt_df)
 
     # --- NACHBAR-ANSICHT ---
     else:
@@ -69,7 +79,6 @@ if user != "Bitte wählen" and pin == USERS[user]:
 
         with tab1:
             st.subheader("Was soll mitgebracht werden?")
-            # Automatisches Speichern bei Enter
             neuer_artikel = st.text_input("Artikel eingeben & Enter drücken", key="new_item")
             if neuer_artikel:
                 with conn.session as s:
@@ -83,10 +92,9 @@ if user != "Bitte wählen" and pin == USERS[user]:
 
         with tab2:
             st.subheader("Deine aktuellen Einträge")
-            # Nur eigene Einträge laden
             meine_daten = conn.query(f"SELECT * FROM einkaufsliste WHERE besteller = '{user}' AND status = 'Offen' ORDER BY id DESC;", ttl=0)
             
-            if meine_daten.empty:
+            if meine_daten is None or meine_daten.empty:
                 st.info("Du hast momentan keine offenen Wünsche.")
             else:
                 for index, row in meine_daten.iterrows():
@@ -100,4 +108,4 @@ if user != "Bitte wählen" and pin == USERS[user]:
 else:
     if pin != "":
         st.sidebar.error("Falscher PIN")
-    st.info("Bitte wähle deinen Namen und gib deinen PIN ein, um die Live-Liste zu sehen.")
+    st.info("Bitte wähle deinen Namen und gib deinen PIN ein.")
