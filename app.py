@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 
 # --- SEITEN-KONFIGURATION ---
-st.set_page_config(page_title="Nachbar-App", layout="centered")
+st.set_page_config(page_title="Nachbar-App", layout="centered", page_icon="🏘️")
 
 # --- DATEN-SPEICHER INITIALISIEREN ---
 if 'einkaufsliste' not in st.session_state:
@@ -27,7 +27,7 @@ pin = st.sidebar.text_input("PIN", type="password")
 if user != "Bitte wählen" and pin == USERS[user]:
     st.sidebar.success(f"Eingeloggt als {user}")
 
-    # Einkäufer sieht alles, Nachbarn sehen ihre eigene Übersicht
+    # --- BEREICH FÜR EINKÄUFER ---
     if user == "Einkäufer":
         st.header("🛒 Alle offenen Einkäufe")
         df = st.session_state.einkaufsliste
@@ -46,9 +46,9 @@ if user != "Bitte wählen" and pin == USERS[user]:
         with st.expander("Vergangene Einkäufe einblenden"):
             st.dataframe(df[df["Status"] == "Erledigt"])
 
+    # --- BEREICH FÜR NACHBARN ---
     else:
-        # --- BEREICH FÜR NACHBARN ---
-        tab1, tab2 = st.tabs(["➕ Neuer Wunsch", "📋 Meine Liste"])
+        tab1, tab2 = st.tabs(["➕ Neuer Wunsch", "📋 Meine Liste & Korrektur"])
 
         with tab1:
             st.subheader("Was brauchst du heute?")
@@ -57,22 +57,33 @@ if user != "Bitte wählen" and pin == USERS[user]:
                 absenden = st.form_submit_button("Auf die Liste setzen")
                 
                 if absenden and artikel:
+                    # Neuen Eintrag erstellen
                     new_entry = pd.DataFrame([{"Besteller": user, "Artikel": artikel, "Status": "Offen"}])
+                    # In den Session State schreiben
                     st.session_state.einkaufsliste = pd.concat([st.session_state.einkaufsliste, new_entry], ignore_index=True)
                     st.success(f"'{artikel}' wurde gespeichert!")
                     st.rerun()
 
         with tab2:
-            st.subheader(f"Status deiner Artikel")
-            meine_daten = st.session_state.einkaufsliste[st.session_state.einkaufsliste["Besteller"] == user]
+            st.subheader("Deine aktuellen Einträge")
+            # Wir holen nur die Daten des aktuellen Nutzers
+            df = st.session_state.einkaufsliste
+            meine_daten = df[df["Besteller"] == user]
             
             if meine_daten.empty:
                 st.info("Du hast noch keine Artikel hinzugefügt.")
             else:
-                # Wir zeigen eine schöne Tabelle mit Status-Icons
-                # Ersetzt Status-Text durch Icons für die Optik
-                display_df = meine_daten[["Artikel", "Status"]].copy()
-                st.table(display_df)
+                for index, row in meine_daten.iterrows():
+                    # Wir zeigen nur Löschen-Buttons für Sachen, die noch "Offen" sind
+                    if row["Status"] == "Offen":
+                        c1, c2 = st.columns([3, 1])
+                        c1.write(f"⏳ {row['Artikel']}")
+                        if c2.button("Löschen 🗑️", key=f"del_{index}"):
+                            # Zeile aus dem DataFrame entfernen
+                            st.session_state.einkaufsliste = st.session_state.einkaufsliste.drop(index)
+                            st.rerun()
+                    else:
+                        st.write(f"✅ {row['Artikel']} (Bereits erledigt)")
 
 else:
     if pin != "":
