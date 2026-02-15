@@ -16,7 +16,7 @@ pin = st.sidebar.text_input("PIN:", type="password")
 
 if user != "Bitte wählen" and pin == PASSWORDS[user]:
     # Daten laden
-    df = conn.read(ttl=0) # ttl=0 erzwingt jedes Mal frische Daten
+    conn.read(worksheet="Einkaufsliste", ttl=0) # ttl=0 erzwingt jedes Mal frische Daten
     
     if user == "Einkäufer":
         st.header("🛒 Einkaufsliste (Alle)")
@@ -30,7 +30,7 @@ if user != "Bitte wählen" and pin == PASSWORDS[user]:
                 if row["Status"] == "Offen":
                     if col2.button("Erledigt", key=index):
                         df.at[index, "Status"] = "Erledigt"
-                        conn.update(data=df)
+                        conn.update(data=df, worksheet="Einkaufsliste")
                         st.rerun()
         else:
             st.info("Liste ist leer.")
@@ -47,7 +47,7 @@ if user != "Bitte wählen" and pin == PASSWORDS[user]:
         if st.button("Hinzufügen"):
             new_data = pd.DataFrame([{"Besteller": user, "Artikel": new_item, "Status": "Offen"}])
             updated_df = pd.concat([df, new_data], ignore_index=True)
-            conn.update(data=updated_df)
+            conn.update(data=updated_df, worksheet="Einkaufsliste")
             st.success("Gespeichert!")
             st.rerun()
 
